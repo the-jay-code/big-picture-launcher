@@ -1,0 +1,24 @@
+# Virtual environment
+venv/
+.venv/
+env/
+ENV/
+
+# Python cache
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Build and Distribution artifacts
+build/
+dist/
+*.spec
+*.exe
+
+# IDE configuration
+.vscode/
+.idea/
+
+# Local configuration overrides
+hydra_bento_config.json
