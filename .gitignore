@@ -10,13 +10,11 @@ __pycache__/
 *$py.class
 *.pyc
 
-# Build artifacts
+# Build and Distribution artifacts
 build/
+dist/
 *.spec
-
-# Allow release standalone executable
-!dist/BPLauncher.exe
-!BPLauncher.exe
+*.exe
 
 # IDE configuration
 .vscode/
