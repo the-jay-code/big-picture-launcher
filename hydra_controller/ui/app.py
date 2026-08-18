@@ -44,6 +44,21 @@ class BentoHydraApp(ctk.CTk):
         self.configure(fg_color=self.theme["window_bg"])
         ctk.set_appearance_mode("Dark" if self.theme_mode == "dark" else "Light")
 
+        # Set Window & Taskbar Icon
+        icon_ico = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "assets", "app_icon.ico")
+        icon_png = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "assets", "app_icon.png")
+        if os.path.exists(icon_ico):
+            try:
+                self.iconbitmap(icon_ico)
+            except Exception:
+                pass
+        if os.path.exists(icon_png):
+            try:
+                img = tk.PhotoImage(file=icon_png)
+                self.wm_iconphoto(True, img)
+            except Exception:
+                pass
+
         # Runtime State
         self.current_page = "dashboard"
         self.start_time = time.time()

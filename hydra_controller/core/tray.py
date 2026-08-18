@@ -7,11 +7,25 @@ from PIL import Image, ImageDraw
 logger = logging.getLogger("hydra_bento")
 
 
+import os
+
 def create_tray_image(is_running: bool = True) -> Image.Image:
-    """Generates a crisp 64x64 system tray icon with BP emblem."""
+    """Generates a crisp 64x64 system tray icon using app_icon.png."""
+    icon_png = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "assets", "app_icon.png")
+    if os.path.exists(icon_png):
+        try:
+            base_img = Image.open(icon_png).convert("RGBA").resize((64, 64), Image.Resampling.LANCZOS)
+            draw = ImageDraw.Draw(base_img)
+            # Status dot in bottom right
+            dot_col = (34, 197, 94, 255) if is_running else (239, 68, 68, 255)
+            draw.ellipse((44, 44, 60, 60), fill=dot_col, outline=(13, 20, 36, 255), width=2)
+            return base_img
+        except Exception:
+            pass
+
     img = Image.new('RGBA', (64, 64), color=(0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
-    draw.ellipse((4, 4, 60, 60), fill=(24, 26, 33, 255), outline=(59, 130, 246, 255) if is_running else (239, 68, 68, 255), width=3)
+    draw.ellipse((4, 4, 60, 60), fill=(24, 26, 33, 255), outline=(56, 189, 248, 255) if is_running else (239, 68, 68, 255), width=3)
     emblem_points = [
         (32, 14), (36, 28), (50, 32), (36, 36),
         (32, 50), (28, 36), (14, 32), (28, 28)
