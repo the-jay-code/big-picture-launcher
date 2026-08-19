@@ -23,14 +23,19 @@ from hydra_controller.core.system import (
 from hydra_controller.core.tray import SystemTrayManager
 from hydra_controller.core.daemon import ControllerDaemon
 from hydra_controller.ui.geometry import draw_rounded_rect
-from hydra_controller.ui.pages.dashboard import draw_dashboard_page
-from hydra_controller.ui.pages.settings import draw_settings_page
-from hydra_controller.ui.pages.about import draw_about_page
+import importlib
+import hydra_controller.ui.pages.dashboard as page_dashboard
+import hydra_controller.ui.pages.telemetry as page_telemetry
+import hydra_controller.ui.pages.settings as page_settings
+import hydra_controller.ui.pages.about as page_about
 
 
 class BentoHydraApp(ctk.CTk):
     def __init__(self):
         super().__init__()
+
+        # Live Hot-Reload Timestamp Registry
+        self.last_file_mtimes = self._scan_source_mtimes()
 
         # Configuration & Themes
         self.cfg = load_config()
@@ -78,6 +83,7 @@ class BentoHydraApp(ctk.CTk):
             get_config=lambda: self.cfg,
             on_controller_change=self.on_controller_state_change,
             on_telemetry_update=self.on_telemetry_update,
+            on_button_update=self.on_button_update,
             on_launch_requested=lambda: threading.Thread(target=self.launch_target_app, daemon=True).start(),
             on_kill_requested=self.kill_target_app,
             on_toast_requested=self.tray_manager.show_toast,
@@ -87,6 +93,18 @@ class BentoHydraApp(ctk.CTk):
         self.create_layout()
         self.daemon.start()
         self.tray_manager.start(daemon_active=self.daemon.is_running)
+
+        # Animation State
+        self.anim_phase = 0.0
+
+        # Force window to foreground on startup
+        self.after(200, self._bring_to_front)
+
+        # Live 24/7 UI Heartbeat Pulse Loop
+        self.after(50, self._live_heartbeat_tick)
+
+        # In-App Live Hot-Reload Watcher Loop
+        self.after(600, self._auto_reload_tick)
 
         self.protocol("WM_DELETE_WINDOW", self.on_closing)
 
@@ -105,6 +123,10 @@ class BentoHydraApp(ctk.CTk):
         self.main_canvas.bind("<Configure>", lambda e: self.redraw())
         self.main_canvas.bind("<Button-1>", self.on_canvas_click)
         self.main_canvas.bind("<Motion>", self.on_canvas_hover)
+
+        # F5 / Ctrl+R Live Hotkeys
+        self.bind("<F5>", lambda e: self.redraw())
+        self.bind("<Control-r>", lambda e: self.redraw())
 
     def set_theme(self, mode: str):
         if mode not in ("dark", "light"):
@@ -156,20 +178,21 @@ class BentoHydraApp(ctk.CTk):
 
         # Vertical Navigation Capsule
         cap_w = 54
-        cap_h = 200
+        cap_h = 240
         cap_x1 = rail_x1 + (rail_width - cap_w) // 2
-        cap_y1 = sp_y + sp_size + 20
+        cap_y1 = sp_y + sp_size + 16
         cap_x2 = cap_x1 + cap_w
         cap_y2 = cap_y1 + cap_h
         draw_rounded_rect(canvas, cap_x1, cap_y1, cap_x2, cap_y2, radius=27, fill=T["rail_bg"], outline=T["outer_border"], width=1.5)
 
         pages = [
-            ("dashboard", "⬚", "Dashboard"),
+            ("dashboard", "⬚", "Controllers"),
+            ("telemetry", "🎮", "Telemetry Lab"),
             ("settings", "⚙", "Settings"),
             ("about", "ℹ", "About"),
         ]
 
-        spacing = (cap_h - 48) / 2
+        spacing = (cap_h - 48) / (len(pages) - 1)
         for i, (page_key, icon, label) in enumerate(pages):
             iy = cap_y1 + 24 + i * spacing
             is_active = (self.current_page == page_key)
@@ -178,24 +201,25 @@ class BentoHydraApp(ctk.CTk):
             r = 15 if is_active else 11
 
             draw_rounded_rect(canvas, cap_x1 + cap_w//2 - r - 4, iy - r - 4, cap_x1 + cap_w//2 + r + 4, iy + r + 4, radius=r+4, fill=bg_col, outline="")
-            canvas.create_text(cap_x1 + cap_w//2, iy, text=icon, fill=fg_col, font=("Segoe UI Symbol", 16, "bold"))
+            canvas.create_text(cap_x1 + cap_w//2, iy, text=icon, fill=fg_col, font=("Segoe UI Symbol", 15, "bold"))
             self.register_hitbox(f"nav_{page_key}", cap_x1, iy - 20, cap_x2, iy + 20, label)
 
         # Theme Switcher Button (☀️ / 🌙)
         th_size = 46
         th_x = rail_x1 + (rail_width - th_size) // 2
-        th_y = cap_y2 + 20
+        th_y = cap_y2 + 16
         draw_rounded_rect(canvas, th_x, th_y, th_x + th_size, th_y + th_size, radius=23, fill=T["rail_bg"], outline=T["outer_border"], width=1.5)
         theme_str = "☀" if self.theme_mode == "light" else "☽"
         canvas.create_text(th_x + th_size//2, th_y + th_size//2, text=theme_str, fill=T["active_blue"] if self.theme_mode == "light" else T["text_light"], font=("Segoe UI Symbol", 20, "bold"))
         self.register_hitbox("toggle_theme_btn", th_x, th_y, th_x + th_size, th_y + th_size, "Toggle Theme")
 
-        # Bottom Daemon Status Indicator
+        # Bottom Daemon Status Indicator (Live 24/7 Animated Pulse)
         bot_btn_r = 20
         bot_btn_y = rail_y2 - 28
         bot_bg = T["active_blue"] if self.daemon.is_running else T["danger_red"]
+        canvas.create_oval(rail_x1 + rail_width//2 - bot_btn_r - 4, bot_btn_y - bot_btn_r - 4, rail_x1 + rail_width//2 + bot_btn_r + 4, bot_btn_y + bot_btn_r + 4, outline=T["active_blue_bg"] if self.daemon.is_running else "", width=2, tags=("daemon_pulse_ring",))
         canvas.create_oval(rail_x1 + rail_width//2 - bot_btn_r, bot_btn_y - bot_btn_r, rail_x1 + rail_width//2 + bot_btn_r, bot_btn_y + bot_btn_r, fill=T["rail_bg"], outline=bot_bg, width=2.5)
-        canvas.create_text(rail_x1 + rail_width//2, bot_btn_y, text="●", fill=bot_bg, font=("Segoe UI", 14, "bold"))
+        canvas.create_text(rail_x1 + rail_width//2, bot_btn_y, text="●", fill=bot_bg, font=("Segoe UI", 14, "bold"), tags=("daemon_dot",))
         self.register_hitbox("toggle_monitor_state", rail_x1 + 6, bot_btn_y - bot_btn_r, rail_x1 + rail_width - 6, bot_btn_y + bot_btn_r, "Toggle Daemon Monitoring")
 
         # Main Viewport Routing
@@ -205,19 +229,30 @@ class BentoHydraApp(ctk.CTk):
         cy2 = h - pad - 12
 
         if self.current_page == "dashboard":
-            draw_dashboard_page(
+            page_dashboard.draw_dashboard_page(
                 canvas=canvas,
                 theme=self.theme,
                 profile=self.get_active_profile(),
                 is_running=self.daemon.is_running,
                 target_name=self.get_target_launcher_name(),
                 controller_count=self.daemon.current_controller_count,
+                connected_controllers=self.daemon.connected_controllers,
+                register_hitbox=self.register_hitbox,
+                x1=cx1, y1=cy1, x2=cx2, y2=cy2
+            )
+        elif self.current_page == "telemetry":
+            page_telemetry.draw_telemetry_page(
+                canvas=canvas,
+                theme=self.theme,
+                profile=self.get_active_profile(),
+                controller_count=self.daemon.current_controller_count,
                 stick_telemetry=self.daemon.stick_telemetry,
+                button_state=self.daemon.button_state,
                 register_hitbox=self.register_hitbox,
                 x1=cx1, y1=cy1, x2=cx2, y2=cy2
             )
         elif self.current_page == "settings":
-            draw_settings_page(
+            page_settings.draw_settings_page(
                 canvas=canvas,
                 theme=self.theme,
                 cfg=self.cfg,
@@ -227,7 +262,7 @@ class BentoHydraApp(ctk.CTk):
                 x1=cx1, y1=cy1, x2=cx2, y2=cy2
             )
         elif self.current_page == "about":
-            draw_about_page(
+            page_about.draw_about_page(
                 canvas=canvas,
                 theme=self.theme,
                 is_startup_active=is_windows_startup_enabled(),
@@ -235,6 +270,61 @@ class BentoHydraApp(ctk.CTk):
                 register_hitbox=self.register_hitbox,
                 x1=cx1, y1=cy1, x2=cx2, y2=cy2
             )
+
+    # -------------------------------------------------------------------------
+    # In-App Live Hot-Reload Engine
+    # -------------------------------------------------------------------------
+    def _scan_source_mtimes(self) -> Dict[str, float]:
+        root_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        mtimes = {}
+        target_dir = os.path.join(root_dir, "hydra_controller")
+        for r, _, files in os.walk(target_dir):
+            for f in files:
+                if f.endswith(".py"):
+                    p = os.path.join(r, f)
+                    try:
+                        mtimes[p] = os.path.getmtime(p)
+                    except Exception:
+                        pass
+        return mtimes
+
+    def _auto_reload_tick(self):
+        try:
+            current_mtimes = self._scan_source_mtimes()
+            changed = False
+            for p, mt in current_mtimes.items():
+                if p not in self.last_file_mtimes or mt != self.last_file_mtimes[p]:
+                    changed = True
+                    break
+            if changed:
+                self.last_file_mtimes = current_mtimes
+                importlib.reload(page_dashboard)
+                importlib.reload(page_telemetry)
+                importlib.reload(page_settings)
+                importlib.reload(page_about)
+                self.redraw()
+                print("[⚡ Hot-Reload] UI modules dynamically reloaded live!")
+        except Exception:
+            pass
+        finally:
+            self.after(500, self._auto_reload_tick)
+
+    def _live_heartbeat_tick(self):
+        try:
+            self.anim_phase = (self.anim_phase + 0.12) % (2 * 3.14159)
+            canvas = self.main_canvas
+
+            if self.daemon.is_running:
+                import math
+                pulse_scale = (math.sin(self.anim_phase) + 1.0) / 2.0  # 0.0 to 1.0
+                ring_width = 1.0 + pulse_scale * 2.5
+                canvas.itemconfig("daemon_pulse_ring", width=ring_width, outline=self.theme["active_blue_bg"] if pulse_scale > 0.3 else "")
+            else:
+                canvas.itemconfig("daemon_pulse_ring", outline="")
+        except Exception:
+            pass
+        finally:
+            self.after(50, self._live_heartbeat_tick)
 
     # -------------------------------------------------------------------------
     # Hitbox & Interaction Dispatcher
@@ -266,6 +356,9 @@ class BentoHydraApp(ctk.CTk):
     def handle_action(self, action_name: str):
         if action_name in ("nav_dashboard", "nav_logo"):
             self.current_page = "dashboard"
+            self.redraw()
+        elif action_name == "nav_telemetry":
+            self.current_page = "telemetry"
             self.redraw()
         elif action_name == "nav_settings":
             self.current_page = "settings"
@@ -439,9 +532,55 @@ class BentoHydraApp(ctk.CTk):
     def on_controller_state_change(self, count: int, name: str):
         self.after(0, self.redraw)
 
-    def on_telemetry_update(self, telemetry: Dict[str, float]):
-        if self.current_page == "dashboard":
+    def on_button_update(self, btn_state: Dict[str, Any]):
+        if self.current_page == "telemetry":
             self.after(0, self.redraw)
+
+    def on_telemetry_update(self, telemetry: Dict[str, float]):
+        if self.current_page == "telemetry":
+            self.after(0, self.update_live_telemetry_hud, telemetry)
+
+    def update_live_telemetry_hud(self, tel: Dict[str, float]):
+        canvas = self.main_canvas
+        meta = getattr(canvas, "telemetry_meta", None)
+        try:
+            ls_x = tel.get('ls_x', 0.0)
+            ls_y = tel.get('ls_y', 0.0)
+            rs_x = tel.get('rs_x', 0.0)
+            rs_y = tel.get('rs_y', 0.0)
+            lt_v = max(0.0, min(1.0, tel.get('lt', 0.0)))
+            rt_v = max(0.0, min(1.0, tel.get('rt', 0.0)))
+
+            if meta:
+                # 1. Left Stick dot across radar scope
+                ls_cx, ls_cy, ls_r = meta["ls_cx"], meta["ls_cy"], meta.get("ls_r", 42)
+                ls_px = ls_cx + int(ls_x * (ls_r - 8))
+                ls_py = ls_cy + int(ls_y * (ls_r - 8))
+                canvas.coords("ls_dot", ls_px - 6, ls_py - 6, ls_px + 6, ls_py + 6)
+
+                # 2. Right Stick dot across radar scope
+                rs_cx, rs_cy, rs_r = meta["rs_cx"], meta["rs_cy"], meta.get("rs_r", 42)
+                rs_px = rs_cx + int(rs_x * (rs_r - 8))
+                rs_py = rs_cy + int(rs_y * (rs_r - 8))
+                canvas.coords("rs_dot", rs_px - 6, rs_py - 6, rs_px + 6, rs_py + 6)
+
+                # 3. Dynamic Trigger Bars
+                trig_x = meta["trig_x"]
+                bar_w = meta["bar_w"]
+                lt_fill = max(1, int(bar_w * lt_v))
+                rt_fill = max(1, int(bar_w * rt_v))
+                lt_y1, lt_y2 = meta.get("lt_y1", 0), meta.get("lt_y2", 0)
+                rt_y1, rt_y2 = meta.get("rt_y1", 0), meta.get("rt_y2", 0)
+                canvas.coords("lt_bar_fill", trig_x, lt_y1, trig_x + lt_fill, lt_y2)
+                canvas.coords("rt_bar_fill", trig_x, rt_y1, trig_x + rt_fill, rt_y2)
+
+            # 4. Update coordinate text readouts
+            canvas.itemconfig("ls_text", text=f"Left Stick (LS)\nX: {ls_x:+.2f}  Y: {ls_y:+.2f}")
+            canvas.itemconfig("rs_text", text=f"Right Stick (RS)\nX: {rs_x:+.2f}  Y: {rs_y:+.2f}")
+            canvas.itemconfig("lt_text", text=f"LT [{int(lt_v * 100)}%]")
+            canvas.itemconfig("rt_text", text=f"RT [{int(rt_v * 100)}%]")
+        except Exception:
+            pass
 
     def toggle_monitor(self):
         if self.daemon.is_running:
@@ -460,10 +599,18 @@ class BentoHydraApp(ctk.CTk):
     def show_from_tray(self):
         self.after(0, self._restore_window)
 
+    def _bring_to_front(self):
+        try:
+            self.deiconify()
+            self.lift()
+            self.attributes("-topmost", True)
+            self.after_idle(self.attributes, "-topmost", False)
+            self.focus_force()
+        except Exception:
+            pass
+
     def _restore_window(self):
-        self.deiconify()
-        self.lift()
-        self.focus_force()
+        self._bring_to_front()
         self.redraw()
 
     def minimize_to_tray(self):

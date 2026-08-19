@@ -21,7 +21,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "auto_launch_on_controller": True,
     "kill_on_disconnect": False,
     "big_picture_mode": False,
-    "minimize_to_tray": False,
+    "minimize_to_tray": True,
     "sound_alerts": True,
     "toast_notifications": True,
     "guide_shortcut_enabled": True,

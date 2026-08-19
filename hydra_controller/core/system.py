@@ -4,6 +4,10 @@ import shutil
 import subprocess
 import winreg
 import logging
+import time
+import threading
+import ctypes
+from ctypes import wintypes
 from typing import Dict, Any
 
 from hydra_controller.core.config import CREATE_NO_WINDOW, REG_RUN_PATH, APP_REG_NAME
@@ -52,9 +56,34 @@ def is_process_running(process_name: str) -> bool:
             creationflags=CREATE_NO_WINDOW,
             text=True
         )
-        return process_name in result.stdout
+        return process_name.lower() in result.stdout.lower()
     except Exception:
         return False
+
+
+def focus_and_maximize_window(window_title_keyword: str = "Hydra"):
+    """Brings target window to foreground and maximizes to fullscreen."""
+    try:
+        user32 = ctypes.windll.user32
+        SW_MAXIMIZE = 3
+        
+        def enum_windows_callback(hwnd, extra):
+            if user32.IsWindowVisible(hwnd):
+                length = user32.GetWindowTextLengthW(hwnd)
+                if length > 0:
+                    buff = ctypes.create_unicode_buffer(length + 1)
+                    user32.GetWindowTextW(hwnd, buff, length + 1)
+                    title = buff.value
+                    if window_title_keyword.lower() in title.lower():
+                        user32.ShowWindow(hwnd, SW_MAXIMIZE)
+                        user32.SetForegroundWindow(hwnd)
+                        return False
+            return True
+
+        WNDENUMPROC = ctypes.WINFUNCTYPE(wintypes.BOOL, wintypes.HWND, wintypes.LPARAM)
+        user32.EnumWindows(WNDENUMPROC(enum_windows_callback), 0)
+    except Exception as e:
+        logger.warning(f"Focus window helper error: {e}")
 
 
 def find_hydra_exe(cfg: Dict[str, Any]) -> str:
@@ -141,7 +170,7 @@ def launch_target_launcher(cfg: Dict[str, Any]):
         logger.info("Opening Steam in Big Picture mode...")
         steam_p = get_launcher_path(cfg, "steam")
         if os.path.exists(steam_p):
-            subprocess.Popen([steam_p, "-bigpicture"], creationflags=CREATE_NO_WINDOW)
+            subprocess.Popen([steam_p, "-bigpicture"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, creationflags=CREATE_NO_WINDOW)
         else:
             try:
                 os.startfile("steam://open/bigpicture")
@@ -153,28 +182,35 @@ def launch_target_launcher(cfg: Dict[str, Any]):
         logger.info("Launching Playnite Fullscreen...")
         playnite_path = get_launcher_path(cfg, "playnite")
         if os.path.exists(playnite_path):
-            subprocess.Popen([playnite_path], creationflags=CREATE_NO_WINDOW)
+            subprocess.Popen([playnite_path, "--fullscreen"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, creationflags=CREATE_NO_WINDOW)
         return
 
     if target == "custom":
         custom_p = get_launcher_path(cfg, "custom")
         if custom_p and os.path.exists(custom_p):
-            subprocess.Popen([custom_p], creationflags=CREATE_NO_WINDOW)
+            subprocess.Popen([custom_p], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL, creationflags=CREATE_NO_WINDOW)
         return
 
-    # Default Hydra
+    # Default Hydra Launcher in Big Picture / Fullscreen
     if is_process_running("Hydra.exe"):
-        logger.info("Hydra is already running.")
+        logger.info("Hydra is already running — focusing and maximizing window...")
+        focus_and_maximize_window("Hydra")
         return
 
     hydra_path = get_launcher_path(cfg, "hydra")
-    flags = ["--big-picture"] if cfg.get("big_picture_mode", False) else []
     try:
         subprocess.Popen(
-            [hydra_path] + flags,
+            [hydra_path, "--start-maximized"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
             creationflags=CREATE_NO_WINDOW
         )
         logger.info(f"Launched Hydra Launcher ({hydra_path})")
+        
+        # Bring to focus & snap window
+        threading.Thread(target=lambda: (time.sleep(0.8), focus_and_maximize_window("Hydra")), daemon=True).start()
+
     except Exception as e:
         logger.error(f"Launch failed ({hydra_path}): {e}")
 
